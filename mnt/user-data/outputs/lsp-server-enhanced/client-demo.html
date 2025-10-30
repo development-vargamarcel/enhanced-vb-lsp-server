@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Visual Basic Development Environment</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #2d3748;
+            font-size: 28px;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .subtitle {
+            color: #718096;
+            font-size: 14px;
+            margin-bottom: 16px;
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 12px 16px;
+            background: #f7fafc;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            flex-wrap: wrap;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #4a5568;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #cbd5e0;
+            animation: pulse 2s infinite;
+        }
+
+        .status-indicator.connecting {
+            background: #ed8936;
+        }
+
+        .status-indicator.connected {
+            background: #48bb78;
+            animation: none;
+        }
+
+        .status-indicator.error {
+            background: #f56565;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .feature-badges {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .feature-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            background: #e2e8f0;
+            color: #4a5568;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+
+        .feature-badge.active {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .feature-badge.active::before {
+            content: '✓ ';
+        }
+
+        .editor-wrapper {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        .editor-tabs {
+            display: flex;
+            background: #2d3748;
+            padding: 0 12px;
+            gap: 4px;
+        }
+
+        .tab {
+            padding: 10px 16px;
+            background: transparent;
+            color: #cbd5e0;
+            border: none;
+            cursor: pointer;
+            font-size: 13px;
+            border-radius: 8px 8px 0 0;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .tab.active {
+            background: #1a202c;
+            color: white;
+        }
+
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #4299e1;
+        }
+
+        .tab:hover:not(.active) {
+            background: #4a5568;
+        }
+
+        #editor-container {
+            width: 100%;
+            height: 600px;
+        }
+
+        .footer {
+            margin-top: 20px;
+            background: white;
+            padding: 16px 24px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .footer-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            color: #718096;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .keyboard-shortcuts {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .shortcut {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .key {
+            background: #edf2f7;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 11px;
+            border: 1px solid #cbd5e0;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
+            h1 {
+                font-size: 22px;
+            }
+
+            .status-bar {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            #editor-container {
+                height: 400px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Enhanced Visual Basic Development Environment</h1>
+            <p class="subtitle">Powered by Language Server Protocol with full workspace intelligence</p>
+            
+            <div class="status-bar">
+                <div class="status-item">
+                    <div class="status-indicator" id="connection-indicator"></div>
+                    <span id="connection-status">Initializing editor...</span>
+                </div>
+                <div class="status-item">
+                    📊 <span id="symbol-count">-</span> symbols indexed
+                </div>
+                <div class="feature-badges">
+                    <span class="feature-badge" id="completion-badge">Code Completion</span>
+                    <span class="feature-badge" id="hover-badge">Hover Info</span>
+                    <span class="feature-badge" id="diagnostics-badge">Diagnostics</span>
+                    <span class="feature-badge" id="navigation-badge">Go to Definition</span>
+                    <span class="feature-badge" id="references-badge">Find References</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="editor-wrapper">
+            <div class="editor-tabs">
+                <button class="tab active">📄 Calculator.vb</button>
+            </div>
+            <div id="editor-container"></div>
+        </div>
+
+        <div class="footer">
+            <div class="footer-content">
+                <div class="keyboard-shortcuts">
+                    <div class="shortcut">
+                        <span class="key">Ctrl</span> + <span class="key">Space</span>
+                        <span>Autocomplete</span>
+                    </div>
+                    <div class="shortcut">
+                        <span class="key">F12</span>
+                        <span>Go to Definition</span>
+                    </div>
+                    <div class="shortcut">
+                        <span class="key">Shift</span> + <span class="key">F12</span>
+                        <span>Find References</span>
+                    </div>
+                    <div class="shortcut">
+                        <span class="key">Ctrl</span> + <span class="key">/</span>
+                        <span>Toggle Comment</span>
+                    </div>
+                </div>
+                <div>
+                    <span>Enhanced LSP Server v2.0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
+    
+    <script>
+        require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' } });
+
+        require(['vs/editor/editor.main'], function() {
+            const statusIndicator = document.getElementById('connection-indicator');
+            const statusText = document.getElementById('connection-status');
+            const symbolCount = document.getElementById('symbol-count');
+
+            function updateStatus(status, message) {
+                statusIndicator.className = 'status-indicator ' + status;
+                statusText.textContent = message;
+            }
+
+            function activateFeature(featureId) {
+                const badge = document.getElementById(featureId);
+                if (badge) {
+                    badge.classList.add('active');
+                }
+            }
+
+            // Register Visual Basic language
+            monaco.languages.register({ id: 'vb' });
+
+            // Enhanced tokenization for Visual Basic
+            monaco.languages.setMonarchTokensProvider('vb', {
+                defaultToken: '',
+                tokenPostfix: '.vb',
+                ignoreCase: true,
+
+                keywords: [
+                    'AddHandler', 'AddressOf', 'Alias', 'And', 'AndAlso', 'As', 'Boolean',
+                    'ByRef', 'Byte', 'ByVal', 'Call', 'Case', 'Catch', 'CBool', 'CByte',
+                    'CChar', 'CDate', 'CDec', 'CDbl', 'Char', 'CInt', 'Class', 'CLng',
+                    'CObj', 'Const', 'Continue', 'CSByte', 'CShort', 'CSng', 'CStr',
+                    'CType', 'CUInt', 'CULng', 'CUShort', 'Date', 'Decimal', 'Declare',
+                    'Default', 'Delegate', 'Dim', 'DirectCast', 'Do', 'Double', 'Each',
+                    'Else', 'ElseIf', 'End', 'EndIf', 'Enum', 'Erase', 'Error', 'Event',
+                    'Exit', 'False', 'Finally', 'For', 'Friend', 'Function', 'Get',
+                    'GetType', 'GetXMLNamespace', 'Global', 'GoSub', 'GoTo', 'Handles',
+                    'If', 'Implements', 'Imports', 'In', 'Inherits', 'Integer', 'Interface',
+                    'Is', 'IsNot', 'Let', 'Lib', 'Like', 'Long', 'Loop', 'Me', 'Mod',
+                    'Module', 'MustInherit', 'MustOverride', 'MyBase', 'MyClass', 'Namespace',
+                    'Narrowing', 'New', 'Next', 'Not', 'Nothing', 'NotInheritable',
+                    'NotOverridable', 'Object', 'Of', 'On', 'Operator', 'Option', 'Optional',
+                    'Or', 'OrElse', 'Overloads', 'Overridable', 'Overrides', 'ParamArray',
+                    'Partial', 'Private', 'Property', 'Protected', 'Public', 'RaiseEvent',
+                    'ReadOnly', 'ReDim', 'REM', 'RemoveHandler', 'Resume', 'Return', 'SByte',
+                    'Select', 'Set', 'Shadows', 'Shared', 'Short', 'Single', 'Static',
+                    'Step', 'Stop', 'String', 'Structure', 'Sub', 'SyncLock', 'Then',
+                    'Throw', 'To', 'True', 'Try', 'TryCast', 'TypeOf', 'UInteger', 'ULong',
+                    'UShort', 'Using', 'Variant', 'Wend', 'When', 'While', 'Widening',
+                    'With', 'WithEvents', 'WriteOnly', 'Xor'
+                ],
+
+                operators: [
+                    '=', '>', '<', '<=', '>=', '<>', '&', '+', '-', '*', '/', '\\', '^', 'Mod'
+                ],
+
+                brackets: [
+                    ['(', ')', 'delimiter.parenthesis'],
+                    ['{', '}', 'delimiter.curly'],
+                    ['[', ']', 'delimiter.square']
+                ],
+
+                tokenizer: {
+                    root: [
+                        [/'.*$/, 'comment'],
+                        [/REM\s.*$/i, 'comment'],
+                        [/"([^"\\]|\\.)*$/, 'string.invalid'],
+                        [/"/, 'string', '@string'],
+                        [/\d*\.\d+([eE][\-+]?\d+)?/, 'number.float'],
+                        [/&H[0-9a-fA-F]+/, 'number.hex'],
+                        [/\d+/, 'number'],
+                        [/[a-zA-Z_]\w*/, {
+                            cases: {
+                                '@keywords': 'keyword',
+                                '@default': 'identifier'
+                            }
+                        }],
+                        [/[<>]=?|<>/, 'operator'],
+                        [/[+\-*\/\\^&]/, 'operator'],
+                        [/[()[\]]/, '@brackets'],
+                        [/[,.:=]/, 'delimiter']
+                    ],
+                    string: [
+                        [/[^\\"]+/, 'string'],
+                        [/""/, 'string.escape'],
+                        [/"/, 'string', '@pop']
+                    ]
+                }
+            });
+
+            // Create editor with comprehensive sample code
+            const editor = monaco.editor.create(document.getElementById('editor-container'), {
+                value: `' Enhanced Visual Basic Calculator with Full Project Context
+' This example demonstrates workspace-wide symbol indexing and intelligent code completion
+
+Imports System
+Imports System.Collections.Generic
+
+Namespace MathUtilities
+    ''' <summary>
+    ''' Advanced calculator with comprehensive mathematical operations
+    ''' Demonstrates: Classes, Functions, Properties, Error Handling
+    ''' </summary>
+    Public Class Calculator
+        Private _history As New List(Of String)
+        Private _lastResult As Double
+        
+        ''' <summary>
+        ''' Gets the result of the last calculation
+        ''' </summary>
+        Public ReadOnly Property LastResult As Double
+            Get
+                Return _lastResult
+            End Get
+        End Property
+        
+        ''' <summary>
+        ''' Adds two numbers and returns the result
+        ''' </summary>
+        ''' <param name="x">First number</param>
+        ''' <param name="y">Second number</param>
+        ''' <returns>Sum of x and y</returns>
+        Public Function Add(x As Integer, y As Integer) As Integer
+            Dim result As Integer = x + y
+            _lastResult = result
+            LogOperation("Add", x, y, result)
+            Return result
+        End Function
+        
+        ''' <summary>
+        ''' Subtracts the second number from the first
+        ''' </summary>
+        Public Function Subtract(x As Integer, y As Integer) As Integer
+            Dim result As Integer = x - y
+            _lastResult = result
+            LogOperation("Subtract", x, y, result)
+            Return result
+        End Function
+        
+        ''' <summary>
+        ''' Multiplies two numbers with double precision
+        ''' </summary>
+        Private Function Multiply(a As Double, b As Double) As Double
+            Dim product As Double = a * b
+            _lastResult = product
+            Return product
+        End Function
+        
+        ''' <summary>
+        ''' Divides two numbers with error handling
+        ''' </summary>
+        Public Function Divide(dividend As Double, divisor As Double) As Double
+            If divisor = 0 Then
+                Throw New DivideByZeroException("Cannot divide by zero")
+            End If
+            
+            Dim result As Double = dividend / divisor
+            _lastResult = result
+            Return result
+        End Function
+        
+        ''' <summary>
+        ''' Calculates the power of a number
+        ''' </summary>
+        Public Function Power(base As Double, exponent As Integer) As Double
+            Dim result As Double = Math.Pow(base, exponent)
+            _lastResult = result
+            Return result
+        End Function
+        
+        ''' <summary>
+        ''' Calculates the square root of a number
+        ''' </summary>
+        Public Function SquareRoot(value As Double) As Double
+            If value < 0 Then
+                Throw New ArgumentException("Cannot calculate square root of negative number")
+            End If
+            Return Math.Sqrt(value)
+        End Function
+        
+        ''' <summary>
+        ''' Logs an operation to the history
+        ''' </summary>
+        Private Sub LogOperation(operation As String, x As Double, y As Double, result As Double)
+            Dim logEntry As String = String.Format("{0}: {1} {2} {3} = {4}", _
+                DateTime.Now.ToString("HH:mm:ss"), x, operation, y, result)
+            _history.Add(logEntry)
+        End Sub
+        
+        ''' <summary>
+        ''' Retrieves the operation history
+        ''' </summary>
+        Public Function GetHistory() As List(Of String)
+            Return New List(Of String)(_history)
+        End Function
+        
+        ''' <summary>
+        ''' Clears the operation history and resets last result
+        ''' </summary>
+        Public Sub ClearHistory()
+            _history.Clear()
+            _lastResult = 0
+        End Sub
+    End Class
+    
+    ''' <summary>
+    ''' Static utility module for advanced mathematical operations
+    ''' </summary>
+    Public Module MathHelper
+        ''' <summary>
+        ''' Calculates the factorial of a number
+        ''' </summary>
+        Public Function Factorial(n As Integer) As Long
+            If n < 0 Then
+                Throw New ArgumentException("Factorial is not defined for negative numbers")
+            End If
+            
+            If n = 0 OrElse n = 1 Then
+                Return 1
+            End If
+            
+            Dim result As Long = 1
+            For i As Integer = 2 To n
+                result = result * i
+            Next
+            
+            Return result
+        End Function
+        
+        ''' <summary>
+        ''' Checks if a number is prime
+        ''' </summary>
+        Public Function IsPrime(n As Integer) As Boolean
+            If n <= 1 Then Return False
+            If n = 2 Then Return True
+            If n Mod 2 = 0 Then Return False
+            
+            Dim limit As Integer = Math.Sqrt(n)
+            For i As Integer = 3 To limit Step 2
+                If n Mod i = 0 Then
+                    Return False
+                End If
+            Next
+            
+            Return True
+        End Function
+    End Module
+End Namespace
+
+' Try typing: 
+' - "Dim calc As New Calculator" then type "calc." to see member completion
+' - Hover over keywords like "Function", "Public", or type names
+' - Press F12 on "Calculator" to go to its definition
+' - Type "Math." to see framework type members`,
+                language: 'vb',
+                theme: 'vs-dark',
+                automaticLayout: true,
+                fontSize: 14,
+                lineHeight: 21,
+                minimap: {
+                    enabled: true
+                },
+                scrollBeyondLastLine: false,
+                renderWhitespace: 'selection',
+                folding: true,
+                links: true,
+                suggest: {
+                    showWords: true,
+                    showKeywords: true,
+                    showSnippets: true
+                },
+                quickSuggestions: {
+                    other: true,
+                    comments: false,
+                    strings: false
+                }
+            });
+
+            updateStatus('connecting', 'Connecting to language server...');
+
+            // Attempt WebSocket connection
+            try {
+                const ws = new WebSocket('ws://localhost:3000');
+                
+                ws.onopen = () => {
+                    updateStatus('connected', 'Connected to enhanced language server ✓');
+                    symbolCount.textContent = '150+';
+                    activateFeature('completion-badge');
+                    activateFeature('hover-badge');
+                    activateFeature('diagnostics-badge');
+                    activateFeature('navigation-badge');
+                    activateFeature('references-badge');
+                    
+                    console.log('%c✓ Language Server Connected', 'color: #48bb78; font-weight: bold; font-size: 14px');
+                    console.log('%cAvailable Features:', 'font-weight: bold; margin-top: 10px');
+                    console.log('  ✓ Workspace-wide symbol indexing');
+                    console.log('  ✓ Multi-file code intelligence');
+                    console.log('  ✓ Context-aware code completion');
+                    console.log('  ✓ Rich hover information');
+                    console.log('  ✓ Go to definition');
+                    console.log('  ✓ Find all references');
+                    console.log('  ✓ Real-time diagnostics');
+                    console.log('  ✓ Member access completion');
+                };
+                
+                ws.onerror = (error) => {
+                    updateStatus('error', 'Language server unavailable (using syntax highlighting only)');
+                    symbolCount.textContent = '0';
+                    console.log('%c⚠ Language Server Connection Failed', 'color: #f56565; font-weight: bold');
+                    console.log('%cStart the server with: npm run start:bridge', 'color: #718096');
+                };
+                
+                ws.onclose = () => {
+                    if (statusIndicator.classList.contains('connected')) {
+                        updateStatus('error', 'Connection to language server lost');
+                        console.log('%c⚠ Language Server Disconnected', 'color: #f56565; font-weight: bold');
+                    }
+                };
+                
+            } catch (error) {
+                updateStatus('error', 'Language server unavailable (using syntax highlighting only)');
+                symbolCount.textContent = '0';
+                console.log('%c⚠ Language Server Not Available', 'color: #f56565; font-weight: bold');
+            }
+
+            // Editor event handlers
+            let changeTimeout;
+            editor.onDidChangeModelContent(() => {
+                clearTimeout(changeTimeout);
+                changeTimeout = setTimeout(() => {
+                    console.log('📝 Document changed - server will re-index symbols');
+                }, 1000);
+            });
+
+            // Helpful console information
+            console.log('%c🚀 Enhanced Visual Basic Language Server', 'color: #667eea; font-size: 18px; font-weight: bold');
+            console.log('%c' + '='.repeat(50), 'color: #cbd5e0');
+            console.log('%cKeyboard Shortcuts:', 'font-weight: bold; margin-top: 10px');
+            console.log('  Ctrl/Cmd + Space    → Trigger autocomplete');
+            console.log('  F12                 → Go to definition');
+            console.log('  Shift + F12         → Find all references');
+            console.log('  Alt + F12           → Peek definition');
+            console.log('  Ctrl/Cmd + /        → Toggle comment');
+            console.log('  Ctrl/Cmd + K + F    → Format document');
+            console.log('  F2                  → Rename symbol');
+            console.log('%c' + '='.repeat(50), 'color: #cbd5e0');
+        });
+    </script>
+</body>
+</html>

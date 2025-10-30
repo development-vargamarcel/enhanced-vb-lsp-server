@@ -1,0 +1,173 @@
+====================================================================
+   Enhanced Visual Basic Language Server - Setup Instructions
+====================================================================
+
+This package provides a complete Language Server Protocol implementation
+for Visual Basic with IntelliSense features for Monaco Editor.
+
+--------------------------------------------------------------------
+STEP 1: VERIFY FILE STRUCTURE
+--------------------------------------------------------------------
+
+Make sure you have the following files after extraction:
+
+lsp-enhanced/
+├── src/
+│   ├── server.ts
+│   └── websocket-bridge.ts
+├── package.json
+├── tsconfig.json
+├── README.md
+├── client-demo.html
+└── .gitignore
+
+If the src/ folder is missing or empty, the extraction may have failed.
+Re-extract the archive or download again.
+
+--------------------------------------------------------------------
+STEP 2: INSTALL NODE.JS
+--------------------------------------------------------------------
+
+You need Node.js version 16.0.0 or higher.
+
+Download from: https://nodejs.org/
+
+Verify installation:
+  node --version
+  npm --version
+
+--------------------------------------------------------------------
+STEP 3: INSTALL DEPENDENCIES
+--------------------------------------------------------------------
+
+Open a terminal/command prompt in the lsp-enhanced directory and run:
+
+  npm install
+
+This will download all required packages (may take a few minutes).
+
+--------------------------------------------------------------------
+STEP 4: COMPILE TYPESCRIPT
+--------------------------------------------------------------------
+
+Compile the TypeScript source code to JavaScript:
+
+  npm run compile
+
+This creates the "out" directory with compiled .js files.
+
+If you see "No inputs were found" error, make sure the src/ directory
+exists and contains the .ts files.
+
+--------------------------------------------------------------------
+STEP 5: START THE SERVER
+--------------------------------------------------------------------
+
+Start the WebSocket bridge server:
+
+  npm run start:bridge
+
+You should see output like:
+
+  =====================================
+  Enhanced VB Language Server
+  =====================================
+  WebSocket: ws://localhost:3000
+  Health: http://localhost:3000/health
+  Ready to accept connections
+  =====================================
+
+Leave this terminal window open - the server must keep running.
+
+--------------------------------------------------------------------
+STEP 6: TEST WITH THE DEMO
+--------------------------------------------------------------------
+
+Open client-demo.html in a web browser (Chrome, Firefox, Edge, etc.)
+
+You should see:
+  ✓ Connected to language server (green status)
+
+Try the features:
+  - Press Ctrl+Space for code completion
+  - Hover over keywords for information
+  - Edit code and see diagnostics
+
+--------------------------------------------------------------------
+TROUBLESHOOTING
+--------------------------------------------------------------------
+
+ERROR: "No inputs were found in config file"
+SOLUTION: Make sure src/server.ts and src/websocket-bridge.ts exist.
+          Re-extract the archive if files are missing.
+
+ERROR: "Cannot find module"
+SOLUTION: Run "npm install" first, then "npm run compile"
+
+ERROR: "Port 3000 already in use"
+SOLUTION: Another process is using port 3000.
+          Kill that process or use: PORT=3001 npm run start:bridge
+
+ERROR: "Connection failed" in browser
+SOLUTION: Make sure the server is running (npm run start:bridge)
+          Check firewall isn't blocking port 3000
+
+ERROR: TypeScript compilation errors
+SOLUTION: Make sure you have TypeScript installed:
+          npm install -g typescript
+
+--------------------------------------------------------------------
+AVAILABLE COMMANDS
+--------------------------------------------------------------------
+
+npm install          Install dependencies
+npm run compile      Compile TypeScript to JavaScript
+npm run watch        Auto-compile on file changes
+npm start            Run in stdio mode (for editors)
+npm run start:bridge Run WebSocket bridge (for browsers)
+npm run clean        Remove compiled files
+npm run rebuild      Clean and recompile
+
+--------------------------------------------------------------------
+INTEGRATION WITH YOUR PROJECT
+--------------------------------------------------------------------
+
+To use with your own Visual Basic project:
+
+1. Modify the workspace folders in your client initialization
+2. Point to your .vb project directories
+3. The server will automatically index all .vb and .vbs files
+
+See README.md for detailed integration instructions.
+
+--------------------------------------------------------------------
+FEATURES
+--------------------------------------------------------------------
+
+✓ Workspace-wide symbol indexing
+✓ Multi-file code intelligence
+✓ Context-aware code completion
+✓ Rich hover information
+✓ Go to definition
+✓ Find all references
+✓ Real-time diagnostics
+✓ WebSocket bridge for browsers
+
+--------------------------------------------------------------------
+SYSTEM REQUIREMENTS
+--------------------------------------------------------------------
+
+- Node.js 16.0.0 or higher
+- npm (comes with Node.js)
+- Modern web browser (Chrome 90+, Firefox 88+, Edge 90+, Safari 14+)
+- 500 MB free disk space
+- 2 GB RAM minimum
+
+--------------------------------------------------------------------
+SUPPORT
+--------------------------------------------------------------------
+
+For detailed documentation, see README.md
+For the latest version, visit the project repository
+
+====================================================================

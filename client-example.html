@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monaco Editor with VB LSP</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+        #container {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #ccc;
+        }
+        h1 {
+            margin-top: 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Visual Basic Editor with Language Server</h1>
+    <div id="container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vscode-ws-jsonrpc@3.1.0/browser.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/monaco-languageclient@7.3.0/lib/index.js"></script>
+    
+    <script>
+        require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' } });
+
+        require(['vs/editor/editor.main'], function() {
+            // Register Visual Basic language
+            monaco.languages.register({ id: 'vb' });
+
+            // Set up basic syntax highlighting
+            monaco.languages.setMonarchTokensProvider('vb', {
+                keywords: [
+                    'Dim', 'Public', 'Private', 'Function', 'Sub', 'Class', 'Module',
+                    'If', 'Then', 'Else', 'ElseIf', 'End', 'For', 'Next', 'While',
+                    'Return', 'As', 'New', 'String', 'Integer', 'Boolean', 'Long',
+                    'Double', 'Object', 'True', 'False', 'Nothing'
+                ],
+                tokenizer: {
+                    root: [
+                        [/[a-z_$][\w$]*/, {
+                            cases: {
+                                '@keywords': 'keyword',
+                                '@default': 'identifier'
+                            }
+                        }],
+                        [/".*?"/, 'string'],
+                        [/'.*$/, 'comment'],
+                        [/\d+/, 'number']
+                    ]
+                }
+            });
+
+            // Create the editor
+            const editor = monaco.editor.create(document.getElementById('container'), {
+                value: `' Visual Basic Example
+Public Class Calculator
+    Public Function Add(x As Integer, y As Integer) As Integer
+        Dim result As Integer
+        result = x + y
+        Return result
+    End Function
+    
+    Private Sub ShowMessage()
+        Dim message As String
+        message = "Hello, World!"
+    End Sub
+End Class`,
+                language: 'vb',
+                theme: 'vs-dark',
+                automaticLayout: true
+            });
+
+            // Note: To connect to the LSP server, you would use monaco-languageclient
+            // This requires setting up a WebSocket connection to your language server
+            // Example connection code (requires server running with WebSocket support):
+            /*
+            const webSocket = new WebSocket('ws://localhost:3000');
+            listen({
+                webSocket,
+                onConnection: connection => {
+                    const languageClient = createLanguageClient(connection);
+                    languageClient.start();
+                    connection.onClose(() => languageClient.stop());
+                }
+            });
+            */
+        });
+    </script>
+</body>
+</html>

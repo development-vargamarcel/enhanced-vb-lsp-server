@@ -1,0 +1,23 @@
+﻿# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+*.js.map
+
+# IDE files
+.vscode/
+*.code-workspace
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment variables
+.env
+.env.local
+
+# System Files
+.DS_Store
+Thumbs.db

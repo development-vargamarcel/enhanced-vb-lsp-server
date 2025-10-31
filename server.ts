@@ -22,6 +22,38 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Configuration interface
+interface VBConfig {
+  indexing?: {
+    enabled?: boolean;
+    includeFiles?: string[];
+    excludeDirectories?: string[];
+  };
+  diagnostics?: {
+    enabled?: boolean;
+    checkMissingTypes?: boolean;
+    checkUnusedVariables?: boolean;
+    checkMissingEndStatements?: boolean;
+  };
+}
+
+// Default configuration
+const defaultConfig: VBConfig = {
+  indexing: {
+    enabled: true,
+    includeFiles: ['**/*.vb', '**/*.vbs', '**/*.bas', '**/*.cls', '**/*.frm'],
+    excludeDirectories: ['node_modules', 'bin', 'obj', '.git']
+  },
+  diagnostics: {
+    enabled: true,
+    checkMissingTypes: true,
+    checkUnusedVariables: true,
+    checkMissingEndStatements: true
+  }
+};
+
+let currentConfig: VBConfig = { ...defaultConfig };
+
 // Create connection based on environment or fallback to stdio
 const connection = process.argv.includes('--stdio')
   ? createConnection(process.stdin, process.stdout)
@@ -56,6 +88,38 @@ const workspaceIndex: WorkspaceSymbolIndex = {
 let hasConfigurationCapability = false;
 let hasWorkspaceFolderCapability = false;
 let workspaceFolders: WorkspaceFolder[] = [];
+let workspaceRoot: string = '';
+
+// Utility functions for validation
+function isValidPath(filePath: string): boolean {
+  try {
+    const normalized = path.normalize(filePath);
+    // Check for directory traversal
+    if (normalized.includes('..')) {
+      connection.console.warn(`Rejected path with directory traversal: ${filePath}`);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function isWithinWorkspace(filePath: string): boolean {
+  if (!workspaceRoot) return true; // Allow if no workspace root set
+  try {
+    const normalized = path.normalize(filePath);
+    const root = path.normalize(workspaceRoot);
+    return normalized.startsWith(root);
+  } catch (error) {
+    return false;
+  }
+}
+
+function sanitizeSymbolName(name: string): string {
+  // Remove potentially dangerous characters
+  return name.replace(/[^\w]/g, '');
+}
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
   connection.console.log('Initializing server with params: ' + JSON.stringify(params, null, 2));
@@ -72,6 +136,16 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   if (params.workspaceFolders) {
     workspaceFolders = params.workspaceFolders;
     connection.console.log('Workspace folders: ' + JSON.stringify(workspaceFolders, null, 2));
+  }
+
+  // Set workspace root for validation
+  if (params.rootUri) {
+    try {
+      workspaceRoot = decodeURIComponent(params.rootUri.replace('file://', ''));
+      connection.console.log(`Workspace root set to: ${workspaceRoot}`);
+    } catch (error) {
+      connection.console.error(`Error setting workspace root: ${error}`);
+    }
   }
 
   // Add test folder to workspace folders if not present
@@ -117,20 +191,37 @@ connection.onInitialized(async () => {
     connection.client.register(DidChangeConfigurationNotification.type, undefined);
   }
 
-  // Register file watcher for VB files
-  connection.client.register(
-    require('vscode-languageserver').DidChangeWatchedFilesNotification.type,
-    {
-      watchers: [
-        {
-          globPattern: '**/*.{vb,vbs,bas,cls,frm}',
-          kind: require('vscode-languageserver').WatchKind.Create |
-            require('vscode-languageserver').WatchKind.Change |
-            require('vscode-languageserver').WatchKind.Delete
-        }
-      ]
+  // Load configuration file if present
+  try {
+    const configPath = path.join(workspaceRoot || process.cwd(), '.vbconfig.json');
+    if (fs.existsSync(configPath)) {
+      const configContent = fs.readFileSync(configPath, 'utf-8');
+      const loadedConfig = JSON.parse(configContent);
+      currentConfig = { ...defaultConfig, ...loadedConfig };
+      connection.console.log('Loaded configuration from .vbconfig.json');
     }
-  );
+  } catch (error) {
+    connection.console.warn(`Failed to load .vbconfig.json: ${error}`);
+  }
+
+  // Register file watcher for VB files
+  try {
+    connection.client.register(
+      require('vscode-languageserver').DidChangeWatchedFilesNotification.type,
+      {
+        watchers: [
+          {
+            globPattern: '**/*.{vb,vbs,bas,cls,frm}',
+            kind: require('vscode-languageserver').WatchKind.Create |
+              require('vscode-languageserver').WatchKind.Change |
+              require('vscode-languageserver').WatchKind.Delete
+          }
+        ]
+      }
+    );
+  } catch (error) {
+    connection.console.error(`Failed to register file watcher: ${error}`);
+  }
 
   // Load initial workspace
   connection.console.log('Starting initial workspace indexing...');
@@ -187,9 +278,20 @@ async function indexWorkspace() {
   }
 
   for (const folder of workspaceFolders) {
-    const folderPath = decodeURIComponent(folder.uri.replace('file://', ''));
-    connection.console.log(`Indexing workspace folder: ${folderPath}`);
-    await indexDirectory(folderPath);
+    try {
+      const folderPath = decodeURIComponent(folder.uri.replace('file://', ''));
+
+      // Validate workspace folder path
+      if (!isValidPath(folderPath)) {
+        connection.console.error(`Invalid workspace folder path: ${folderPath}`);
+        continue;
+      }
+
+      connection.console.log(`Indexing workspace folder: ${folderPath}`);
+      await indexDirectory(folderPath);
+    } catch (error) {
+      connection.console.error(`Error processing workspace folder ${folder.uri}: ${error}`);
+    }
   }
 
   const totalSymbols = Array.from(workspaceIndex.fileSymbols.values())
@@ -200,21 +302,25 @@ async function indexWorkspace() {
 
 async function indexDirectory(dirPath: string) {
   try {
+    // Validate path
+    if (!isValidPath(dirPath)) {
+      connection.console.error(`Invalid directory path: ${dirPath}`);
+      return;
+    }
+
     if (!fs.existsSync(dirPath)) {
       return;
     }
 
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
     const vbFilePatterns = ['.vb', '.vbs', '.bas', '.cls', '.frm'];
+    const excludeDirs = currentConfig.indexing?.excludeDirectories || defaultConfig.indexing!.excludeDirectories!;
 
     for (const entry of entries) {
       const fullPath = path.join(dirPath, entry.name);
 
       if (entry.isDirectory()) {
-        if (!entry.name.startsWith('.') &&
-          entry.name !== 'node_modules' &&
-          entry.name !== 'bin' &&
-          entry.name !== 'obj') {
+        if (!entry.name.startsWith('.') && !excludeDirs.includes(entry.name)) {
           await indexDirectory(fullPath);
         }
       } else if (entry.isFile() && vbFilePatterns.some(ext => entry.name.toLowerCase().endsWith(ext))) {
@@ -233,6 +339,12 @@ async function indexDirectory(dirPath: string) {
 
 async function indexFile(filePath: string) {
   try {
+    // Validate path
+    if (!isValidPath(filePath)) {
+      connection.console.error(`Invalid file path: ${filePath}`);
+      return;
+    }
+
     const content = fs.readFileSync(filePath, 'utf-8');
     const uri = 'file://' + filePath;
     const symbols = parseDocumentSymbols(content, uri);
@@ -246,7 +358,12 @@ async function indexFile(filePath: string) {
 
 function parseDocumentSymbols(text: string, uri: string): ProjectSymbol[] {
   const symbols: ProjectSymbol[] = [];
-  const lines = text.split('\n');
+
+  // Handle VB line continuation character (_)
+  let processedText = text;
+  processedText = processedText.replace(/\s+_\s*\n/g, ' ');
+
+  const lines = processedText.split('\n');
   let currentClass: string | null = null;
   let currentModule: string | null = null;
 
@@ -479,11 +596,11 @@ function generateSymbolDocumentation(symbol: ProjectSymbol): string {
 }
 
 connection.onCompletion((textDocumentPosition: TextDocumentPositionParams): CompletionItem[] => {
-  console.log('Completion request received:', textDocumentPosition);
+  connection.console.log('Completion request received for: ' + textDocumentPosition.textDocument.uri);
 
   const document = documents.get(textDocumentPosition.textDocument.uri);
   if (!document) {
-    console.log('Document not found:', textDocumentPosition.textDocument.uri);
+    connection.console.log('Document not found: ' + textDocumentPosition.textDocument.uri);
     // Return built-in symbols as fallback
     return Array.from(workspaceIndex.symbols.values())
       .flat()
@@ -495,7 +612,7 @@ connection.onCompletion((textDocumentPosition: TextDocumentPositionParams): Comp
       }));
   }
 
-  console.log('Document found, processing completion...');
+  connection.console.log('Document found, processing completion...');
 
   const completionItems: CompletionItem[] = [];
   const text = document.getText();
@@ -691,7 +808,13 @@ documents.onDidClose(e => {
 connection.onDidChangeWatchedFiles(async params => {
   for (const change of params.changes) {
     const uri = change.uri;
-    const fsPath = uri.replace('file://', '');
+    const fsPath = decodeURIComponent(uri.replace('file://', ''));
+
+    // Validate path
+    if (!isValidPath(fsPath)) {
+      connection.console.warn(`Rejected invalid path: ${fsPath}`);
+      continue;
+    }
 
     // Handle file changes
     if (change.type === 1 || change.type === 2) { // Created or Changed
@@ -711,14 +834,26 @@ connection.onDidChangeWatchedFiles(async params => {
 });
 
 async function validateTextDocument(textDocument: TextDocument): Promise<void> {
+  if (!currentConfig.diagnostics?.enabled) {
+    return;
+  }
+
   const text = textDocument.getText();
   const diagnostics: Diagnostic[] = [];
   const lines = text.split('\n');
+  const blockStack: Array<{ type: string; line: number }> = [];
+  const declaredVariables: Map<string, { line: number; used: boolean }> = new Map();
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
 
-    if (line.match(/^\s*Dim\s+\w+\s*$/i)) {
+    // Skip comments
+    if (line.startsWith("'") || line.startsWith('REM ')) {
+      continue;
+    }
+
+    // VB001: Variable declared without explicit type
+    if (currentConfig.diagnostics?.checkMissingTypes && line.match(/^\s*Dim\s+\w+\s*$/i)) {
       diagnostics.push({
         severity: DiagnosticSeverity.Warning,
         range: {
@@ -731,7 +866,10 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
       });
     }
 
-    if (line.match(/^\s*(Public|Private)?\s*Function\s+\w+\s*\(/i) && !line.includes(' As ')) {
+    // VB002: Function without explicit return type
+    if (currentConfig.diagnostics?.checkMissingTypes &&
+        line.match(/^\s*(Public|Private)?\s*Function\s+\w+\s*\(/i) &&
+        !line.includes(' As ')) {
       diagnostics.push({
         severity: DiagnosticSeverity.Warning,
         range: {
@@ -743,6 +881,95 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
         code: 'VB002'
       });
     }
+
+    // VB003: Track block structures for missing End statements
+    if (currentConfig.diagnostics?.checkMissingEndStatements) {
+      if (line.match(/^\s*(Public|Private)?\s*Class\s+\w+/i)) {
+        blockStack.push({ type: 'Class', line: i });
+      } else if (line.match(/^\s*(Public|Private)?\s*Module\s+\w+/i)) {
+        blockStack.push({ type: 'Module', line: i });
+      } else if (line.match(/^\s*(Public|Private)?\s*Function\s+\w+/i)) {
+        blockStack.push({ type: 'Function', line: i });
+      } else if (line.match(/^\s*(Public|Private)?\s*Sub\s+\w+/i)) {
+        blockStack.push({ type: 'Sub', line: i });
+      } else if (line.match(/^\s*If\s+.*\s+Then\s*$/i)) {
+        blockStack.push({ type: 'If', line: i });
+      } else if (line.match(/^\s*For\s+/i)) {
+        blockStack.push({ type: 'For', line: i });
+      } else if (line.match(/^\s*While\s+/i)) {
+        blockStack.push({ type: 'While', line: i });
+      } else if (line.match(/^\s*End\s+(Class|Module|Function|Sub|If|For|While)/i)) {
+        const match = line.match(/^\s*End\s+(\w+)/i);
+        if (match && blockStack.length > 0) {
+          const endType = match[1];
+          const lastBlock = blockStack[blockStack.length - 1];
+          if (lastBlock.type.toLowerCase() === endType.toLowerCase()) {
+            blockStack.pop();
+          } else {
+            diagnostics.push({
+              severity: DiagnosticSeverity.Error,
+              range: {
+                start: { line: i, character: 0 },
+                end: { line: i, character: lines[i].length }
+              },
+              message: `Mismatched End statement: expected 'End ${lastBlock.type}', found 'End ${endType}'`,
+              source: 'vb-lsp',
+              code: 'VB003'
+            });
+          }
+        }
+      }
+    }
+
+    // VB004: Track variable declarations and usage
+    if (currentConfig.diagnostics?.checkUnusedVariables) {
+      const varMatch = line.match(/^\s*Dim\s+(\w+)/i);
+      if (varMatch) {
+        declaredVariables.set(varMatch[1], { line: i, used: false });
+      } else {
+        // Check if any declared variables are used in this line
+        declaredVariables.forEach((info, varName) => {
+          const regex = new RegExp(`\\b${varName}\\b`, 'i');
+          if (regex.test(line)) {
+            info.used = true;
+          }
+        });
+      }
+    }
+  }
+
+  // VB003: Check for unclosed blocks
+  if (currentConfig.diagnostics?.checkMissingEndStatements) {
+    blockStack.forEach(block => {
+      diagnostics.push({
+        severity: DiagnosticSeverity.Error,
+        range: {
+          start: { line: block.line, character: 0 },
+          end: { line: block.line, character: lines[block.line].length }
+        },
+        message: `Missing 'End ${block.type}' statement`,
+        source: 'vb-lsp',
+        code: 'VB003'
+      });
+    });
+  }
+
+  // VB004: Report unused variables
+  if (currentConfig.diagnostics?.checkUnusedVariables) {
+    declaredVariables.forEach((info, varName) => {
+      if (!info.used) {
+        diagnostics.push({
+          severity: DiagnosticSeverity.Information,
+          range: {
+            start: { line: info.line, character: 0 },
+            end: { line: info.line, character: lines[info.line].length }
+          },
+          message: `Variable '${varName}' is declared but never used`,
+          source: 'vb-lsp',
+          code: 'VB004'
+        });
+      }
+    });
   }
 
   connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });

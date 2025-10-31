@@ -48,7 +48,7 @@ npm run start:bridge
 ```
 Browser Client (Monaco Editor)
     ↕ WebSocket
-WebSocket Bridge (port 3000)
+WebSocket Bridge (port 3001)
     ↕ stdio
 Language Server
     ↕ file system
@@ -68,7 +68,7 @@ Make sure you have the `src` directory with `server.ts` and `websocket-bridge.ts
 ### WebSocket connection fails
 
 1. Ensure the server is running (`npm run start:bridge`)
-2. Check that port 3000 is not blocked
+2. Check that port 3001 is not blocked
 3. Verify the browser console for errors
 
 ### No code completion

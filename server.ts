@@ -57,7 +57,9 @@ let hasConfigurationCapability = false;
 let hasWorkspaceFolderCapability = false;
 let workspaceFolders: WorkspaceFolder[] = [];
 
-connection.onInitialize((params: InitializeParams) => {
+connection.onInitialize((params: InitializeParams): InitializeResult => {
+  connection.console.log('Initializing server with params: ' + JSON.stringify(params, null, 2));
+
   const capabilities = params.capabilities;
 
   hasConfigurationCapability = !!(
@@ -69,6 +71,17 @@ connection.onInitialize((params: InitializeParams) => {
 
   if (params.workspaceFolders) {
     workspaceFolders = params.workspaceFolders;
+    connection.console.log('Workspace folders: ' + JSON.stringify(workspaceFolders, null, 2));
+  }
+
+  // Add test folder to workspace folders if not present
+  const testFolder = {
+    uri: (params.rootUri || '') + '/test',
+    name: 'VB Test Files'
+  };
+  if (!workspaceFolders.some(folder => folder.uri === testFolder.uri)) {
+    workspaceFolders.push(testFolder);
+    connection.console.log('Added test folder to workspace folders');
   }
 
   const result: InitializeResult = {
@@ -97,15 +110,33 @@ connection.onInitialize((params: InitializeParams) => {
   return result;
 });
 
-connection.onInitialized(() => {
+connection.onInitialized(async () => {
   connection.console.log('Enhanced Visual Basic Language Server initialized');
 
   if (hasConfigurationCapability) {
     connection.client.register(DidChangeConfigurationNotification.type, undefined);
   }
 
+  // Register file watcher for VB files
+  connection.client.register(
+    require('vscode-languageserver').DidChangeWatchedFilesNotification.type,
+    {
+      watchers: [
+        {
+          globPattern: '**/*.{vb,vbs,bas,cls,frm}',
+          kind: require('vscode-languageserver').WatchKind.Create |
+            require('vscode-languageserver').WatchKind.Change |
+            require('vscode-languageserver').WatchKind.Delete
+        }
+      ]
+    }
+  );
+
+  // Load initial workspace
+  connection.console.log('Starting initial workspace indexing...');
+
   loadVisualBasicSymbols();
-  indexWorkspace();
+  await indexWorkspace();
 });
 
 function loadVisualBasicSymbols() {
@@ -148,8 +179,16 @@ function loadVisualBasicSymbols() {
 async function indexWorkspace() {
   connection.console.log('Starting workspace indexing...');
 
+  // Always include the test folder
+  const testFolderPath = path.join(__dirname, '..', 'test');
+  if (fs.existsSync(testFolderPath)) {
+    connection.console.log(`Indexing test folder: ${testFolderPath}`);
+    await indexDirectory(testFolderPath);
+  }
+
   for (const folder of workspaceFolders) {
     const folderPath = decodeURIComponent(folder.uri.replace('file://', ''));
+    connection.console.log(`Indexing workspace folder: ${folderPath}`);
     await indexDirectory(folderPath);
   }
 
@@ -166,6 +205,7 @@ async function indexDirectory(dirPath: string) {
     }
 
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    const vbFilePatterns = ['.vb', '.vbs', '.bas', '.cls', '.frm'];
 
     for (const entry of entries) {
       const fullPath = path.join(dirPath, entry.name);
@@ -177,8 +217,13 @@ async function indexDirectory(dirPath: string) {
           entry.name !== 'obj') {
           await indexDirectory(fullPath);
         }
-      } else if (entry.isFile() && (entry.name.endsWith('.vb') || entry.name.endsWith('.vbs'))) {
-        await indexFile(fullPath);
+      } else if (entry.isFile() && vbFilePatterns.some(ext => entry.name.toLowerCase().endsWith(ext))) {
+        try {
+          await indexFile(fullPath);
+          connection.console.log(`Indexed VB file: ${entry.name}`);
+        } catch (error) {
+          connection.console.error(`Error indexing file ${entry.name}: ${error}`);
+        }
       }
     }
   } catch (error) {
@@ -202,17 +247,69 @@ async function indexFile(filePath: string) {
 function parseDocumentSymbols(text: string, uri: string): ProjectSymbol[] {
   const symbols: ProjectSymbol[] = [];
   const lines = text.split('\n');
+  let currentClass: string | null = null;
+  let currentModule: string | null = null;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i].trim();
 
-    const classMatch = line.match(/^\s*(Public|Private)?\s*Class\s+(\w+)/i);
+    // Skip comments and empty lines
+    if (line.startsWith("'") || line.startsWith('REM ') || !line) {
+      continue;
+    }
+
+    // Module detection
+    const moduleMatch = line.match(/^\s*(Public\s+|Private\s+)?Module\s+(\w+)/i);
+    if (moduleMatch) {
+      currentModule = moduleMatch[2];
+      symbols.push({
+        name: moduleMatch[2],
+        kind: CompletionItemKind.Module,
+        detail: 'Module',
+        accessibility: moduleMatch[1]?.trim() || 'Public',
+        location: {
+          uri: uri,
+          range: {
+            start: { line: i, character: 0 },
+            end: { line: i, character: line.length }
+          }
+        }
+      });
+      continue;
+    }
+
+    // Class detection
+    const classMatch = line.match(/^\s*(Public\s+|Private\s+)?Class\s+(\w+)(?:\s+(?:Inherits|Implements)\s+(\w+))?/i);
     if (classMatch) {
+      currentClass = classMatch[2];
       symbols.push({
         name: classMatch[2],
         kind: CompletionItemKind.Class,
-        detail: 'Class',
-        accessibility: classMatch[1] || 'Public',
+        detail: `Class${classMatch[3] ? ` (${classMatch[3]})` : ''}`,
+        accessibility: classMatch[1]?.trim() || 'Public',
+        location: {
+          uri: uri,
+          range: {
+            start: { line: i, character: 0 },
+            end: { line: i, character: line.length }
+          }
+        }
+      });
+      continue;
+    }
+
+    // Property detection
+    const propertyMatch = line.match(/^\s*(Public\s+|Private\s+)?Property\s+(Get|Let|Set)?\s*(\w+)(?:\s*\((.*?)\))?\s*(?:As\s+(\w+))?/i);
+    if (propertyMatch) {
+      const propName = propertyMatch[3];
+      const propType = propertyMatch[5] || 'Variant';
+      const accessType = propertyMatch[2] || 'Get';
+      symbols.push({
+        name: propName,
+        kind: CompletionItemKind.Property,
+        detail: `Property ${accessType} As ${propType}`,
+        accessibility: propertyMatch[1]?.trim() || 'Public',
+        type: propType,
         location: {
           uri: uri,
           range: {
@@ -223,16 +320,21 @@ function parseDocumentSymbols(text: string, uri: string): ProjectSymbol[] {
       });
     }
 
-    const funcMatch = line.match(/^\s*(Public|Private)?\s*Function\s+(\w+)\s*\(([^)]*)\)(?:\s+As\s+(\w+))?/i);
+    // Function detection with enhanced parameter parsing
+    const funcMatch = line.match(/^\s*(Public\s+|Private\s+)?Function\s+(\w+)\s*\((.*?)\)(?:\s+As\s+(\w+))?/i);
     if (funcMatch) {
-      const params = funcMatch[3] ? funcMatch[3].split(',').map(p => p.trim()).filter(p => p) : [];
+      const params = funcMatch[3] ? funcMatch[3].split(',').map(p => {
+        const paramMatch = p.trim().match(/(?:ByVal\s+|ByRef\s+)?(\w+)(?:\s+As\s+(\w+))?/i);
+        return paramMatch ? `${paramMatch[1]}: ${paramMatch[2] || 'Variant'}` : p.trim();
+      }).filter(p => p) : [];
+
       symbols.push({
         name: funcMatch[2],
         kind: CompletionItemKind.Function,
-        detail: 'Function',
-        accessibility: funcMatch[1] || 'Public',
+        detail: `Function (${params.join(', ')}) As ${funcMatch[4] || 'Variant'}`,
+        accessibility: funcMatch[1]?.trim() || 'Public',
         parameters: params,
-        returnType: funcMatch[4] || 'Object',
+        returnType: funcMatch[4] || 'Variant',
         location: {
           uri: uri,
           range: {
@@ -243,14 +345,19 @@ function parseDocumentSymbols(text: string, uri: string): ProjectSymbol[] {
       });
     }
 
-    const subMatch = line.match(/^\s*(Public|Private)?\s*Sub\s+(\w+)\s*\(([^)]*)\)/i);
+    // Subroutine detection with enhanced parameter parsing
+    const subMatch = line.match(/^\s*(Public\s+|Private\s+)?Sub\s+(\w+)\s*\((.*?)\)/i);
     if (subMatch) {
-      const params = subMatch[3] ? subMatch[3].split(',').map(p => p.trim()).filter(p => p) : [];
+      const params = subMatch[3] ? subMatch[3].split(',').map(p => {
+        const paramMatch = p.trim().match(/(?:ByVal\s+|ByRef\s+)?(\w+)(?:\s+As\s+(\w+))?/i);
+        return paramMatch ? `${paramMatch[1]}: ${paramMatch[2] || 'Variant'}` : p.trim();
+      }).filter(p => p) : [];
+
       symbols.push({
         name: subMatch[2],
         kind: CompletionItemKind.Method,
-        detail: 'Subroutine',
-        accessibility: subMatch[1] || 'Public',
+        detail: `Sub (${params.join(', ')})`,
+        accessibility: subMatch[1]?.trim() || 'Public',
         parameters: params,
         location: {
           uri: uri,
@@ -262,13 +369,71 @@ function parseDocumentSymbols(text: string, uri: string): ProjectSymbol[] {
       });
     }
 
-    const dimMatch = line.match(/^\s*Dim\s+(\w+)(?:\s+As\s+(\w+))?/i);
-    if (dimMatch) {
+    // Variable declarations (Dim, Private, Public)
+    const varMatch = line.match(/^\s*(Dim|Private|Public)\s+(\w+)(?:\s*\(.*?\))?\s*(?:As\s+(\w+))?/i);
+    if (varMatch) {
+      const scope = varMatch[1].toLowerCase() === 'dim' ? (currentClass || currentModule ? 'Private' : 'Local') : varMatch[1];
       symbols.push({
-        name: dimMatch[1],
+        name: varMatch[2],
         kind: CompletionItemKind.Variable,
-        detail: 'Variable',
-        type: dimMatch[2] || 'Object',
+        detail: `${scope} Variable As ${varMatch[3] || 'Variant'}`,
+        type: varMatch[3] || 'Variant',
+        accessibility: scope,
+        location: {
+          uri: uri,
+          range: {
+            start: { line: i, character: 0 },
+            end: { line: i, character: line.length }
+          }
+        }
+      });
+    }
+
+    // Const declarations
+    const constMatch = line.match(/^\s*(Private\s+|Public\s+)?Const\s+(\w+)\s*(?:As\s+(\w+))?\s*=\s*(.+)$/i);
+    if (constMatch) {
+      symbols.push({
+        name: constMatch[2],
+        kind: CompletionItemKind.Constant,
+        detail: `Constant As ${constMatch[3] || 'Variant'} = ${constMatch[4].trim()}`,
+        type: constMatch[3] || 'Variant',
+        accessibility: constMatch[1]?.trim() || 'Public',
+        location: {
+          uri: uri,
+          range: {
+            start: { line: i, character: 0 },
+            end: { line: i, character: line.length }
+          }
+        }
+      });
+    }
+
+    // Enum detection
+    const enumMatch = line.match(/^\s*(Public\s+|Private\s+)?Enum\s+(\w+)/i);
+    if (enumMatch) {
+      symbols.push({
+        name: enumMatch[2],
+        kind: CompletionItemKind.Enum,
+        detail: 'Enumeration',
+        accessibility: enumMatch[1]?.trim() || 'Public',
+        location: {
+          uri: uri,
+          range: {
+            start: { line: i, character: 0 },
+            end: { line: i, character: line.length }
+          }
+        }
+      });
+    }
+
+    // Type (User-Defined Type) detection
+    const typeMatch = line.match(/^\s*(Public\s+|Private\s+)?Type\s+(\w+)/i);
+    if (typeMatch) {
+      symbols.push({
+        name: typeMatch[2],
+        kind: CompletionItemKind.Struct,
+        detail: 'User-Defined Type',
+        accessibility: typeMatch[1]?.trim() || 'Public',
         location: {
           uri: uri,
           range: {
@@ -283,149 +448,231 @@ function parseDocumentSymbols(text: string, uri: string): ProjectSymbol[] {
   return symbols;
 }
 
-connection.onCompletion(
-  (textDocumentPosition: TextDocumentPositionParams): CompletionItem[] => {
-    const document = documents.get(textDocumentPosition.textDocument.uri);
-    if (!document) {
-      return [];
-    }
+function generateSymbolDocumentation(symbol: ProjectSymbol): string {
+  let doc = `### ${symbol.name}\n\n`;
 
-    const completionItems: CompletionItem[] = [];
+  if (symbol.accessibility) {
+    doc += `**Accessibility:** ${symbol.accessibility}\n\n`;
+  }
 
-    workspaceIndex.symbols.forEach((symbols) => {
-      symbols.forEach(symbol => {
+  if (symbol.type) {
+    doc += `**Type:** ${symbol.type}\n\n`;
+  }
+
+  if (symbol.parameters && symbol.parameters.length > 0) {
+    doc += '**Parameters:**\n';
+    symbol.parameters.forEach(param => {
+      doc += `- ${param}\n`;
+    });
+    doc += '\n';
+  }
+
+  if (symbol.returnType) {
+    doc += `**Returns:** ${symbol.returnType}\n\n`;
+  }
+
+  if (symbol.documentation) {
+    doc += `${symbol.documentation}\n\n`;
+  }
+
+  return doc;
+}
+
+connection.onCompletion((textDocumentPosition: TextDocumentPositionParams): CompletionItem[] => {
+  console.log('Completion request received:', textDocumentPosition);
+
+  const document = documents.get(textDocumentPosition.textDocument.uri);
+  if (!document) {
+    console.log('Document not found:', textDocumentPosition.textDocument.uri);
+    // Return built-in symbols as fallback
+    return Array.from(workspaceIndex.symbols.values())
+      .flat()
+      .map(symbol => ({
+        label: symbol.name,
+        kind: symbol.kind,
+        detail: symbol.detail,
+        documentation: symbol.documentation
+      }));
+  }
+
+  console.log('Document found, processing completion...');
+
+  const completionItems: CompletionItem[] = [];
+  const text = document.getText();
+  const position = textDocumentPosition.position;
+  const currentLine = text.split('\n')[position.line];
+  const lineUntilCursor = currentLine.slice(0, position.character);
+
+  // Context-aware completion based on the current line
+  const inClassContext = /^\s*(Public\s+|Private\s+)?Class\s+\w*$/.test(lineUntilCursor);
+  const inFunctionContext = /^\s*(Public\s+|Private\s+)?(?:Function|Sub)\s+\w*$/.test(lineUntilCursor);
+  const inTypeContext = /\b(?:As|New)\s+\w*$/.test(lineUntilCursor);
+  const inPropertyContext = /^\s*(Public\s+|Private\s+)?Property\s+(?:Get|Let|Set)?\s*\w*$/.test(lineUntilCursor);
+
+  // Add built-in symbols based on context
+  workspaceIndex.symbols.forEach((symbols, category) => {
+    symbols.forEach(symbol => {
+      if ((inTypeContext && symbol.kind === CompletionItemKind.Class) ||
+        (inClassContext && symbol.kind === CompletionItemKind.Keyword) ||
+        (!inTypeContext && !inClassContext)) {
         completionItems.push({
           label: symbol.name,
           kind: symbol.kind,
           detail: symbol.detail,
-          documentation: symbol.documentation
+          documentation: symbol.documentation,
+          sortText: `0${symbol.name}` // Built-in symbols appear first
         });
-      });
+      }
     });
+  });
 
-    workspaceIndex.fileSymbols.forEach((symbols) => {
-      symbols.forEach(symbol => {
-        const existing = completionItems.find(item => item.label === symbol.name);
-        if (!existing) {
+  // Add workspace symbols with context awareness
+  workspaceIndex.fileSymbols.forEach((symbols) => {
+    symbols.forEach(symbol => {
+      const existing = completionItems.find(item => item.label === symbol.name);
+      if (!existing) {
+        let shouldAdd = true;
+        if (inTypeContext) {
+          shouldAdd = symbol.kind === CompletionItemKind.Class ||
+            symbol.kind === CompletionItemKind.Interface ||
+            symbol.kind === CompletionItemKind.Enum ||
+            symbol.kind === CompletionItemKind.Struct;
+        } else if (inPropertyContext) {
+          shouldAdd = symbol.kind === CompletionItemKind.Property ||
+            symbol.kind === CompletionItemKind.Method ||
+            symbol.kind === CompletionItemKind.Function;
+        }
+
+        if (shouldAdd) {
+          let detail = symbol.detail;
+          if (symbol.parameters) {
+            detail += `\nParameters: (${symbol.parameters.join(', ')})`;
+          }
+          if (symbol.type) {
+            detail += `\nType: ${symbol.type}`;
+          }
+
           completionItems.push({
             label: symbol.name,
             kind: symbol.kind,
-            detail: symbol.detail
+            detail: detail,
+            documentation: {
+              kind: 'markdown',
+              value: generateSymbolDocumentation(symbol)
+            },
+            sortText: `1${symbol.name}`, // Workspace symbols appear after built-ins
+            data: {
+              uri: document.uri,
+              name: symbol.name,
+              kind: symbol.kind
+            }
           });
         }
-      });
+      }
     });
+  });
 
-    return completionItems;
+  return completionItems;
+});
+
+connection.onCompletionResolve((item: CompletionItem): CompletionItem => {
+  return item;
+});
+
+connection.onHover((params: TextDocumentPositionParams): Hover | null => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) {
+    return null;
   }
-);
 
-connection.onCompletionResolve(
-  (item: CompletionItem): CompletionItem => {
-    return item;
-  }
-);
+  const position = params.position;
+  const text = document.getText();
+  const lineText = text.split('\n')[position.line];
+  const word = getWordAtPosition(lineText, position.character);
 
-connection.onHover(
-  (params: TextDocumentPositionParams): Hover | null => {
-    const document = documents.get(params.textDocument.uri);
-    if (!document) {
-      return null;
-    }
-
-    const position = params.position;
-    const text = document.getText();
-    const lineText = text.split('\n')[position.line];
-    const word = getWordAtPosition(lineText, position.character);
-
-    for (const [category, symbols] of workspaceIndex.symbols) {
-      const symbol = symbols.find(s => s.name.toLowerCase() === word.toLowerCase());
-      if (symbol) {
-        return {
-          contents: {
-            kind: 'markdown',
-            value: `**${symbol.name}**\n\n${symbol.detail}${symbol.documentation ? '\n\n' + symbol.documentation : ''}`
-          }
-        };
-      }
-    }
-
-    const foundSymbol = findSymbol(word, document.uri);
-    if (foundSymbol) {
-      let content = `**${foundSymbol.name}**\n\n${foundSymbol.detail}`;
-      if (foundSymbol.type) {
-        content += `\n\nType: ${foundSymbol.type}`;
-      }
+  for (const [category, symbols] of workspaceIndex.symbols) {
+    const symbol = symbols.find(s => s.name.toLowerCase() === word.toLowerCase());
+    if (symbol) {
       return {
         contents: {
           kind: 'markdown',
-          value: content
+          value: `**${symbol.name}**\n\n${symbol.detail}${symbol.documentation ? '\n\n' + symbol.documentation : ''}`
         }
       };
     }
-
-    return null;
   }
-);
 
-connection.onDefinition(
-  (params: TextDocumentPositionParams): Definition | null => {
-    const document = documents.get(params.textDocument.uri);
-    if (!document) {
-      return null;
+  const foundSymbol = findSymbol(word, document.uri);
+  if (foundSymbol) {
+    let content = `**${foundSymbol.name}**\n\n${foundSymbol.detail}`;
+    if (foundSymbol.type) {
+      content += `\n\nType: ${foundSymbol.type}`;
     }
-
-    const text = document.getText();
-    const lineText = text.split('\n')[params.position.line];
-    const word = getWordAtPosition(lineText, params.position.character);
-
-    const symbol = findSymbol(word, document.uri);
-    if (symbol && symbol.location) {
-      return symbol.location;
-    }
-
-    return null;
-  }
-);
-
-connection.onReferences(
-  (params: ReferenceParams): Location[] => {
-    const document = documents.get(params.textDocument.uri);
-    if (!document) {
-      return [];
-    }
-
-    const text = document.getText();
-    const lineText = text.split('\n')[params.position.line];
-    const word = getWordAtPosition(lineText, params.position.character);
-
-    const references: Location[] = [];
-
-    workspaceIndex.fileSymbols.forEach((symbols, uri) => {
-      const fileContent = uri.startsWith('file://') ?
-        (() => { try { return fs.readFileSync(uri.replace('file://', ''), 'utf-8'); } catch { return ''; } })() : '';
-
-      if (fileContent) {
-        const lines = fileContent.split('\n');
-        lines.forEach((line, lineNum) => {
-          const regex = new RegExp(`\\b${word}\\b`, 'gi');
-          let match;
-          while ((match = regex.exec(line)) !== null) {
-            references.push({
-              uri: uri,
-              range: {
-                start: { line: lineNum, character: match.index },
-                end: { line: lineNum, character: match.index + word.length }
-              }
-            });
-          }
-        });
+    return {
+      contents: {
+        kind: 'markdown',
+        value: content
       }
-    });
-
-    return references;
+    };
   }
-);
+
+  return null;
+});
+
+connection.onDefinition((params: TextDocumentPositionParams): Definition | null => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) {
+    return null;
+  }
+
+  const text = document.getText();
+  const lineText = text.split('\n')[params.position.line];
+  const word = getWordAtPosition(lineText, params.position.character);
+
+  const symbol = findSymbol(word, document.uri);
+  if (symbol && symbol.location) {
+    return symbol.location;
+  }
+
+  return null;
+});
+
+connection.onReferences((params: ReferenceParams): Location[] => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) {
+    return [];
+  }
+
+  const text = document.getText();
+  const lineText = text.split('\n')[params.position.line];
+  const word = getWordAtPosition(lineText, params.position.character);
+
+  const references: Location[] = [];
+
+  workspaceIndex.fileSymbols.forEach((symbols, uri) => {
+    const fileContent = uri.startsWith('file://') ?
+      (() => { try { return fs.readFileSync(uri.replace('file://', ''), 'utf-8'); } catch { return ''; } })() : '';
+
+    if (fileContent) {
+      const lines = fileContent.split('\n');
+      lines.forEach((line, lineNum) => {
+        const regex = new RegExp(`\\b${word}\\b`, 'gi');
+        let match;
+        while ((match = regex.exec(line)) !== null) {
+          references.push({
+            uri: uri,
+            range: {
+              start: { line: lineNum, character: match.index },
+              end: { line: lineNum, character: match.index + word.length }
+            }
+          });
+        }
+      });
+    }
+  });
+
+  return references;
+});
 
 documents.onDidChangeContent(change => {
   const uri = change.document.uri;
@@ -439,6 +686,28 @@ documents.onDidChangeContent(change => {
 
 documents.onDidClose(e => {
   workspaceIndex.fileSymbols.delete(e.document.uri);
+});
+
+connection.onDidChangeWatchedFiles(async params => {
+  for (const change of params.changes) {
+    const uri = change.uri;
+    const fsPath = uri.replace('file://', '');
+
+    // Handle file changes
+    if (change.type === 1 || change.type === 2) { // Created or Changed
+      try {
+        await indexFile(fsPath);
+        connection.console.log(`Reindexed file: ${fsPath}`);
+      } catch (error) {
+        connection.console.error(`Error reindexing file ${fsPath}: ${error}`);
+      }
+    }
+    // Handle file deletions
+    else if (change.type === 3) { // Deleted
+      workspaceIndex.fileSymbols.delete(uri);
+      connection.console.log(`Removed from index: ${fsPath}`);
+    }
+  }
 });
 
 async function validateTextDocument(textDocument: TextDocument): Promise<void> {

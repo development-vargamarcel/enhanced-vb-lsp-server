@@ -36,7 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const http = __importStar(require("http"));
 const ws = __importStar(require("ws"));
 const cp = __importStar(require("child_process"));
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 const MAX_CLIENTS = 10;
 const activeConnections = new Map();
 const server = http.createServer((req, res) => {

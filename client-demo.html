@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,32 +9,53 @@
         body {
             margin: 0;
             padding: 20px;
-            font-family: Arial, sans-serif;
-            background: #1e1e1e;
-            color: #fff;
-        }
-        .header {
-            margin-bottom: 20px;
-        }
-        .status {
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            background: #252525;
-        }
-        .status.connected {
-            background: #0e7a0d;
-        }
-        .status.error {
-            background: #a1260d;
-        }
-        #editor {
-            width: 100%;
-            height: 600px;
-            border: 1px solid #444;
-        }
+            fon // Build workspace path and initialize request
+            const workspaceRoot=window.location.pathname.startsWith ('/') ? window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')):
+                window.location.pathname.substring(1, window.location.pathname.lastIndexOf('/'));
+
+            const workspaceUri='file:///'+workspaceRoot.replace(/\\/g, '/');
+            console.log('Workspace URI:', workspaceUri);
+
+            // Send initialize request with debug logging
+            const initializeRequest= {
+
+                jsonrpc: '2.0',
+                id: 0,
+                method: 'initialize',
+                params: {
+                    processId: null,
+                        rootUri: workspaceUri, Arial, sans-serif;
+                    background: #1e1e1e;
+                    color: #fff;
+                }
+
+                .header {
+                    margin-bottom: 20px;
+                }
+
+                .status {
+                    padding: 10px;
+                    border-radius: 5px;
+                    margin-bottom: 20px;
+                    background: #252525;
+                }
+
+                .status.connected {
+                    background: #0e7a0d;
+                }
+
+                .status.error {
+                    background: #a1260d;
+                }
+
+                #editor {
+                    width: 100%;
+                    height: 600px;
+                    border: 1px solid #444;
+                }
     </style>
 </head>
+
 <body>
     <div class="header">
         <h1>Enhanced Visual Basic Language Server</h1>
@@ -42,15 +64,117 @@
     <div id="editor"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
-    
+
     <script>
         require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' } });
 
-        require(['vs/editor/editor.main'], function() {
+        require(['vs/editor/editor.main'], function () {
             const statusEl = document.getElementById('status');
 
             // Register VB language
             monaco.languages.register({ id: 'vb' });
+
+            // Register our custom language client
+            const languageClient = {
+                documentSelector: ['vb'],
+                synchronize: {},
+                initializationOptions: {
+                    workspaceFolders: [{
+                        uri: 'file://' + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')),
+                        name: 'VB Workspace'
+                    }]
+                }
+            };
+
+            // Configure the language service
+            monaco.languages.registerCompletionItemProvider('vb', {
+                triggerCharacters: ['.', ' '],
+                provideCompletionItems: async (model, position) => {
+                    console.log('Completion requested at position:', position);
+                    const wordUntilPosition = model.getWordUntilPosition(position);
+                    const lineUntilPosition = model.getLineContent(position.lineNumber).substring(0, position.column);
+
+                    // Create LSP-style position
+                    const lspPosition = {
+                        line: position.lineNumber - 1,
+                        character: position.column - 1
+                    };
+
+                    // Create LSP-style text document
+                    const textDocument = {
+                        uri: 'file://' + (window.location.pathname.startsWith('/') ? '' : '/') +
+                            window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')).replace(/\\/g, '/') + '/test/ComplexExample.vb',
+                        languageId: 'vb',
+                        version: model.getVersionId(),
+                        text: model.getValue()
+                    };
+
+                    console.log('Document URI:', textDocument.uri);
+
+                    // Wait for initialized before proceeding
+                    if (!window.serverInitialized) {
+                        console.log('Waiting for server initialization...');
+                        return { suggestions: [] };
+                    } try {
+                        // First, notify the server about the document
+                        const didOpenNotification = {
+                            jsonrpc: '2.0',
+                            method: 'textDocument/didOpen',
+                            params: {
+                                textDocument: {
+                                    uri: textDocument.uri,
+                                    languageId: 'vb',
+                                    version: 1,
+                                    text: model.getValue()
+                                }
+                            }
+                        };
+                        console.log('Sending didOpen notification:', didOpenNotification);
+                        window.ws.send(JSON.stringify(didOpenNotification));
+
+                        // Send completion request to language server
+                        const message = {
+                            jsonrpc: '2.0',
+                            id: Date.now(),
+                            method: 'textDocument/completion',
+                            params: {
+                                textDocument: { uri: textDocument.uri },
+                                position: lspPosition,
+                                context: {
+                                    triggerKind: 1,
+                                    triggerCharacter: lineUntilPosition.endsWith('.') ? '.' : undefined
+                                }
+                            }
+                        };
+                        console.log('Sending completion request:', message);
+
+                        if (window.ws.readyState === WebSocket.OPEN) {
+                            return new Promise((resolve) => {
+                                window.pendingRequest = {
+                                    id: message.id,
+                                    resolve: (result) => {
+                                        const items = result || [];
+                                        resolve({
+                                            suggestions: items.map(item => ({
+                                                label: item.label,
+                                                kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
+                                                detail: item.detail,
+                                                documentation: item.documentation,
+                                                insertText: item.insertText || item.label
+                                            }))
+                                        });
+                                    }
+                                };
+                                window.ws.send(JSON.stringify(message));
+                            });
+                        }
+                    } catch (error) {
+                        console.error('Completion error:', error);
+                    }
+
+                    return { suggestions: [] };
+                }
+            });
 
             // Basic syntax highlighting
             monaco.languages.setMonarchTokensProvider('vb', {
@@ -100,25 +224,132 @@ End Class
 
             // Try to connect to language server
             try {
-                const ws = new WebSocket('ws://localhost:3000');
-                
-                ws.onopen = () => {
-                    statusEl.textContent = '✓ Connected to language server';
-                    statusEl.className = 'status connected';
-                    console.log('WebSocket connected');
+                window.ws = new WebSocket('ws://localhost:3001');
+
+                window.serverInitialized = false;
+                window.ws.onopen = () => {
+                    statusEl.textContent = 'Connected, initializing...';
+                    statusEl.className = 'status';
+                    console.log('WebSocket connected, sending initialize request...');
+
+                    // Add message handler for debugging
+                    window.ws.onmessage = (event) => {
+                        console.log('Received from server:', event.data);
+                        try {
+                            const response = JSON.parse(event.data);
+                            console.log('Parsed response:', response);
+
+                            // Handle initialization sequence
+                            if (response.id === 0) {
+                                console.log('Received initialize response, sending initialized notification');
+                                window.ws.send(JSON.stringify({
+                                    jsonrpc: '2.0',
+                                    method: 'initialized',
+                                    params: {}
+                                }));
+
+                                // Configure the workspace
+                                const configureRequest = {
+                                    jsonrpc: '2.0',
+                                    id: 1,
+                                    method: 'workspace/didChangeConfiguration',
+                                    params: {
+                                        settings: {
+                                            visualBasic: {
+                                                indexing: {
+                                                    enabled: true,
+                                                    includeFiles: ["**/*.vb"]
+                                                }
+                                            }
+                                        }
+                                    }
+                                };
+                                window.ws.send(JSON.stringify(configureRequest));
+
+                                window.serverInitialized = true;
+                                statusEl.textContent = '✓ Server initialized';
+                                statusEl.className = 'status connected';
+                            }
+
+                            // Handle workspace configuration response
+                            if (response.id === 1) {
+                                console.log('Workspace configured');
+                            }
+
+                            // Handle server messages
+                            if (response.method === 'window/logMessage' || response.method === 'window/showMessage') {
+                                console.log('Server message:', response.params.message);
+                            }
+
+                            // Handle completion responses
+                            if (window.pendingRequest && response.id === window.pendingRequest.id) {
+                                console.log('Received completion response:', response.result);
+                                window.pendingRequest.resolve(response.result);
+                                window.pendingRequest = null;
+                            }
+                        } catch (e) {
+                            console.warn('Failed to parse server message:', e);
+                            console.log('Raw message:', event.data);
+                        }
+                    };                    // Send initialize request with debug logging
+                    const initializeRequest = {
+                        jsonrpc: '2.0',
+                        id: 0,
+                        method: 'initialize',
+                        params: {
+                            processId: null,
+                            rootUri: window.location.pathname.startsWith('/') ?
+                                'file://' + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')) :
+                                'file:///' + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')).replace(/\\/g, '/'),
+                            capabilities: {
+                                workspace: {
+                                    workspaceFolders: true,
+                                    configuration: true,
+                                    didChangeConfiguration: { dynamicRegistration: true }
+                                },
+                                textDocument: {
+                                    completion: {
+                                        dynamicRegistration: true,
+                                        contextSupport: true,
+                                        completionItem: {
+                                            snippetSupport: true,
+                                            documentationFormat: ['markdown', 'plaintext'],
+                                            deprecatedSupport: true,
+                                            preselectSupport: true,
+                                            insertReplaceSupport: true
+                                        },
+                                        completionItemKind: { valueSet: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25] }
+                                    },
+                                    synchronization: {
+                                        dynamicRegistration: true,
+                                        willSave: true,
+                                        willSaveWaitUntil: true,
+                                        didSave: true
+                                    }
+                                }
+                            },
+                            workspaceFolders: [{
+                                uri: window.location.pathname.startsWith('/') ?
+                                    'file://' + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')) :
+                                    'file:///' + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')).replace(/\\/g, '/'),
+                                name: 'VB Workspace'
+                            }]
+                        }
+                    };
+                    console.log('Sending initialize request:', initializeRequest);
+                    window.ws.send(JSON.stringify(initializeRequest));
                 };
-                
-                ws.onerror = (error) => {
+
+                window.ws.onerror = (error) => {
                     statusEl.textContent = '✗ Not connected (server not running)';
                     statusEl.className = 'status error';
                     console.error('WebSocket error:', error);
                 };
-                
-                ws.onclose = () => {
+
+                window.ws.onclose = () => {
                     statusEl.textContent = '✗ Disconnected';
                     statusEl.className = 'status error';
                 };
-                
             } catch (error) {
                 statusEl.textContent = '✗ Connection failed';
                 statusEl.className = 'status error';
@@ -133,4 +364,5 @@ End Class
         });
     </script>
 </body>
+
 </html>

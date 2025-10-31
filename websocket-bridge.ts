@@ -3,7 +3,7 @@ import * as ws from 'ws';
 import * as cp from 'child_process';
 import { Server } from 'ws';
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 const MAX_CLIENTS = 10;
 
 interface ClientConnection {

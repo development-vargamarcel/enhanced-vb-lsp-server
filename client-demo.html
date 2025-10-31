@@ -180,24 +180,196 @@
 
             // Create editor
             const editor = monaco.editor.create(document.getElementById('editor'), {
-                value: `' Visual Basic Example
-Public Class Calculator
-    Public Function Add(x As Integer, y As Integer) As Integer
-        Dim result As Integer
-        result = x + y
+                value: `' Advanced Visual Basic Example - Employee Management System
+' Demonstrates: Inheritance, Properties, Collections, Error Handling
+
+' Base class for Person
+Public Class Person
+    Private _firstName As String
+    Private _lastName As String
+    Private _age As Integer
+
+    ' Properties with Get/Set
+    Public Property FirstName As String
+        Get
+            Return _firstName
+        End Get
+        Set(value As String)
+            If String.IsNullOrEmpty(value) Then
+                Throw New ArgumentException("First name cannot be empty")
+            End If
+            _firstName = value
+        End Set
+    End Property
+
+    Public Property LastName As String
+        Get
+            Return _lastName
+        End Get
+        Set(value As String)
+            _lastName = value
+        End Set
+    End Property
+
+    Public Property Age As Integer
+        Get
+            Return _age
+        End Get
+        Set(value As Integer)
+            If value < 0 Or value > 150 Then
+                Throw New ArgumentOutOfRangeException("Invalid age")
+            End If
+            _age = value
+        End Set
+    End Property
+
+    ' Constructor
+    Public Sub New(firstName As String, lastName As String, age As Integer)
+        Me.FirstName = firstName
+        Me.LastName = lastName
+        Me.Age = age
+    End Sub
+
+    ' Virtual method for override
+    Public Overridable Function GetFullInfo() As String
+        Return String.Format("{0} {1}, Age: {2}", _firstName, _lastName, _age)
+    End Function
+End Class
+
+' Derived class for Employee
+Public Class Employee
+    Inherits Person
+
+    Private _employeeId As String
+    Private _salary As Decimal
+    Private _department As String
+
+    Public Property EmployeeId As String
+        Get
+            Return _employeeId
+        End Get
+        Set(value As String)
+            _employeeId = value
+        End Set
+    End Property
+
+    Public Property Salary As Decimal
+        Get
+            Return _salary
+        End Get
+        Set(value As Decimal)
+            If value < 0 Then
+                Throw New ArgumentException("Salary cannot be negative")
+            End If
+            _salary = value
+        End Set
+    End Property
+
+    Public Property Department As String
+        Get
+            Return _department
+        End Get
+        Set(value As String)
+            _department = value
+        End Set
+    End Property
+
+    Public Sub New(firstName As String, lastName As String, age As Integer, _
+                   empId As String, salary As Decimal, dept As String)
+        MyBase.New(firstName, lastName, age)
+        Me.EmployeeId = empId
+        Me.Salary = salary
+        Me.Department = dept
+    End Sub
+
+    ' Override base method
+    Public Overrides Function GetFullInfo() As String
+        Return String.Format("{0} | ID: {1} | Dept: {2} | Salary: ${3:N2}", _
+                           MyBase.GetFullInfo(), _employeeId, _department, _salary)
+    End Function
+
+    ' Calculate annual bonus based on salary
+    Public Function CalculateBonus(bonusPercentage As Double) As Decimal
+        If bonusPercentage < 0 Or bonusPercentage > 100 Then
+            Return 0
+        End If
+        Return _salary * (bonusPercentage / 100)
+    End Function
+End Class
+
+' Manager class for employee operations
+Public Class EmployeeManager
+    Private employees As New List(Of Employee)
+
+    ' Add employee to collection
+    Public Sub AddEmployee(emp As Employee)
+        If emp Is Nothing Then
+            Throw New ArgumentNullException("Employee cannot be null")
+        End If
+        employees.Add(emp)
+    End Sub
+
+    ' Find employee by ID
+    Public Function FindEmployeeById(empId As String) As Employee
+        For Each emp As Employee In employees
+            If emp.EmployeeId = empId Then
+                Return emp
+            End If
+        Next
+        Return Nothing
+    End Function
+
+    ' Get employees by department
+    Public Function GetEmployeesByDepartment(dept As String) As List(Of Employee)
+        Dim result As New List(Of Employee)
+        For Each emp As Employee In employees
+            If emp.Department.ToLower() = dept.ToLower() Then
+                result.Add(emp)
+            End If
+        Next
         Return result
     End Function
 
-    Private Sub ShowMessage()
-        Dim message As String
-        message = "Hello, World!"
-    End Sub
+    ' Calculate total payroll
+    Public Function CalculateTotalPayroll() As Decimal
+        Dim total As Decimal = 0
+        For Each emp As Employee In employees
+            total += emp.Salary
+        Next
+        Return total
+    End Function
+
+    ' Get average salary
+    Public Function GetAverageSalary() As Decimal
+        If employees.Count = 0 Then
+            Return 0
+        End If
+        Return CalculateTotalPayroll() / employees.Count
+    End Function
+
+    ' Generate report
+    Public Function GenerateReport() As String
+        Dim report As String = "Employee Report" & vbCrLf
+        report &= "===============" & vbCrLf & vbCrLf
+
+        Dim count As Integer = 0
+        For Each emp As Employee In employees
+            count += 1
+            report &= String.Format("{0}. {1}", count, emp.GetFullInfo()) & vbCrLf
+        Next
+
+        report &= vbCrLf & String.Format("Total Employees: {0}", employees.Count) & vbCrLf
+        report &= String.Format("Total Payroll: ${0:N2}", CalculateTotalPayroll()) & vbCrLf
+        report &= String.Format("Average Salary: ${0:N2}", GetAverageSalary())
+
+        Return report
+    End Function
 End Class
 
-' Try:
-' - Press Ctrl+Space for code completion
-' - Hover over keywords for information
-' - Type "Dim calc As " to see type suggestions`,
+' Try the LSP features:
+' - Press Ctrl+Space after typing "Dim emp As " to see type suggestions
+' - Type "emp." to see available methods and properties
+' - Hover over any keyword or identifier for information`,
                 language: 'vb',
                 theme: 'vs-dark',
                 automaticLayout: true

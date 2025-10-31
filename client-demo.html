@@ -9,50 +9,35 @@
         body {
             margin: 0;
             padding: 20px;
-            fon // Build workspace path and initialize request
-            const workspaceRoot=window.location.pathname.startsWith ('/') ? window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')):
-                window.location.pathname.substring(1, window.location.pathname.lastIndexOf('/'));
+            font-family: Arial, sans-serif;
+            background: #1e1e1e;
+            color: #fff;
+        }
 
-            const workspaceUri='file:///'+workspaceRoot.replace(/\\/g, '/');
-            console.log('Workspace URI:', workspaceUri);
+        .header {
+            margin-bottom: 20px;
+        }
 
-            // Send initialize request with debug logging
-            const initializeRequest= {
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            background: #252525;
+        }
 
-                jsonrpc: '2.0',
-                id: 0,
-                method: 'initialize',
-                params: {
-                    processId: null,
-                        rootUri: workspaceUri, Arial, sans-serif;
-                    background: #1e1e1e;
-                    color: #fff;
-                }
+        .status.connected {
+            background: #0e7a0d;
+        }
 
-                .header {
-                    margin-bottom: 20px;
-                }
+        .status.error {
+            background: #a1260d;
+        }
 
-                .status {
-                    padding: 10px;
-                    border-radius: 5px;
-                    margin-bottom: 20px;
-                    background: #252525;
-                }
-
-                .status.connected {
-                    background: #0e7a0d;
-                }
-
-                .status.error {
-                    background: #a1260d;
-                }
-
-                #editor {
-                    width: 100%;
-                    height: 600px;
-                    border: 1px solid #444;
-                }
+        #editor {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #444;
+        }
     </style>
 </head>
 
@@ -74,18 +59,6 @@
             // Register VB language
             monaco.languages.register({ id: 'vb' });
 
-            // Register our custom language client
-            const languageClient = {
-                documentSelector: ['vb'],
-                synchronize: {},
-                initializationOptions: {
-                    workspaceFolders: [{
-                        uri: 'file://' + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')),
-                        name: 'VB Workspace'
-                    }]
-                }
-            };
-
             // Configure the language service
             monaco.languages.registerCompletionItemProvider('vb', {
                 triggerCharacters: ['.', ' '],
@@ -100,10 +73,16 @@
                         character: position.column - 1
                     };
 
+                    // Build workspace path
+                    const workspaceRoot = window.location.pathname.startsWith('/')
+                        ? window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'))
+                        : window.location.pathname.substring(1, window.location.pathname.lastIndexOf('/'));
+
+                    const workspaceUri = 'file:///' + workspaceRoot.replace(/\\/g, '/');
+
                     // Create LSP-style text document
                     const textDocument = {
-                        uri: 'file://' + (window.location.pathname.startsWith('/') ? '' : '/') +
-                            window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')).replace(/\\/g, '/') + '/test/ComplexExample.vb',
+                        uri: workspaceUri + '/test/ComplexExample.vb',
                         languageId: 'vb',
                         version: model.getVersionId(),
                         text: model.getValue()
@@ -115,7 +94,9 @@
                     if (!window.serverInitialized) {
                         console.log('Waiting for server initialization...');
                         return { suggestions: [] };
-                    } try {
+                    }
+
+                    try {
                         // First, notify the server about the document
                         const didOpenNotification = {
                             jsonrpc: '2.0',
@@ -206,7 +187,7 @@ Public Class Calculator
         result = x + y
         Return result
     End Function
-    
+
     Private Sub ShowMessage()
         Dim message As String
         message = "Hello, World!"
@@ -231,76 +212,85 @@ End Class
                     statusEl.textContent = 'Connected, initializing...';
                     statusEl.className = 'status';
                     console.log('WebSocket connected, sending initialize request...');
+                };
 
-                    // Add message handler for debugging
-                    window.ws.onmessage = (event) => {
-                        console.log('Received from server:', event.data);
-                        try {
-                            const response = JSON.parse(event.data);
-                            console.log('Parsed response:', response);
+                window.ws.onmessage = (event) => {
+                    console.log('Received from server:', event.data);
+                    try {
+                        const response = JSON.parse(event.data);
+                        console.log('Parsed response:', response);
 
-                            // Handle initialization sequence
-                            if (response.id === 0) {
-                                console.log('Received initialize response, sending initialized notification');
-                                window.ws.send(JSON.stringify({
-                                    jsonrpc: '2.0',
-                                    method: 'initialized',
-                                    params: {}
-                                }));
+                        // Handle initialization sequence
+                        if (response.id === 0) {
+                            console.log('Received initialize response, sending initialized notification');
+                            window.ws.send(JSON.stringify({
+                                jsonrpc: '2.0',
+                                method: 'initialized',
+                                params: {}
+                            }));
 
-                                // Configure the workspace
-                                const configureRequest = {
-                                    jsonrpc: '2.0',
-                                    id: 1,
-                                    method: 'workspace/didChangeConfiguration',
-                                    params: {
-                                        settings: {
-                                            visualBasic: {
-                                                indexing: {
-                                                    enabled: true,
-                                                    includeFiles: ["**/*.vb"]
-                                                }
+                            // Configure the workspace
+                            const configureRequest = {
+                                jsonrpc: '2.0',
+                                id: 1,
+                                method: 'workspace/didChangeConfiguration',
+                                params: {
+                                    settings: {
+                                        visualBasic: {
+                                            indexing: {
+                                                enabled: true,
+                                                includeFiles: ["**/*.vb"]
                                             }
                                         }
                                     }
-                                };
-                                window.ws.send(JSON.stringify(configureRequest));
+                                }
+                            };
+                            window.ws.send(JSON.stringify(configureRequest));
 
-                                window.serverInitialized = true;
-                                statusEl.textContent = '✓ Server initialized';
-                                statusEl.className = 'status connected';
-                            }
-
-                            // Handle workspace configuration response
-                            if (response.id === 1) {
-                                console.log('Workspace configured');
-                            }
-
-                            // Handle server messages
-                            if (response.method === 'window/logMessage' || response.method === 'window/showMessage') {
-                                console.log('Server message:', response.params.message);
-                            }
-
-                            // Handle completion responses
-                            if (window.pendingRequest && response.id === window.pendingRequest.id) {
-                                console.log('Received completion response:', response.result);
-                                window.pendingRequest.resolve(response.result);
-                                window.pendingRequest = null;
-                            }
-                        } catch (e) {
-                            console.warn('Failed to parse server message:', e);
-                            console.log('Raw message:', event.data);
+                            window.serverInitialized = true;
+                            statusEl.textContent = '✓ Server initialized - Try Ctrl+Space for completions';
+                            statusEl.className = 'status connected';
                         }
-                    };                    // Send initialize request with debug logging
+
+                        // Handle workspace configuration response
+                        if (response.id === 1) {
+                            console.log('Workspace configured');
+                        }
+
+                        // Handle server messages
+                        if (response.method === 'window/logMessage' || response.method === 'window/showMessage') {
+                            console.log('Server message:', response.params.message);
+                        }
+
+                        // Handle completion responses
+                        if (window.pendingRequest && response.id === window.pendingRequest.id) {
+                            console.log('Received completion response:', response.result);
+                            window.pendingRequest.resolve(response.result);
+                            window.pendingRequest = null;
+                        }
+                    } catch (e) {
+                        console.warn('Failed to parse server message:', e);
+                        console.log('Raw message:', event.data);
+                    }
+                };
+
+                // Build workspace path and initialize request
+                const workspaceRoot = window.location.pathname.startsWith('/')
+                    ? window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/'))
+                    : window.location.pathname.substring(1, window.location.pathname.lastIndexOf('/'));
+
+                const workspaceUri = 'file:///' + workspaceRoot.replace(/\\/g, '/');
+                console.log('Workspace URI:', workspaceUri);
+
+                // Send initialize request with debug logging
+                setTimeout(() => {
                     const initializeRequest = {
                         jsonrpc: '2.0',
                         id: 0,
                         method: 'initialize',
                         params: {
                             processId: null,
-                            rootUri: window.location.pathname.startsWith('/') ?
-                                'file://' + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')) :
-                                'file:///' + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')).replace(/\\/g, '/'),
+                            rootUri: workspaceUri,
                             capabilities: {
                                 workspace: {
                                     workspaceFolders: true,
@@ -329,19 +319,17 @@ End Class
                                 }
                             },
                             workspaceFolders: [{
-                                uri: window.location.pathname.startsWith('/') ?
-                                    'file://' + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')) :
-                                    'file:///' + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/')).replace(/\\/g, '/'),
+                                uri: workspaceUri,
                                 name: 'VB Workspace'
                             }]
                         }
                     };
                     console.log('Sending initialize request:', initializeRequest);
                     window.ws.send(JSON.stringify(initializeRequest));
-                };
+                }, 100);
 
                 window.ws.onerror = (error) => {
-                    statusEl.textContent = '✗ Not connected (server not running)';
+                    statusEl.textContent = '✗ Not connected (server not running on port 3001)';
                     statusEl.className = 'status error';
                     console.error('WebSocket error:', error);
                 };

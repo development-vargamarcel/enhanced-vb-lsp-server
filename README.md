@@ -57,7 +57,38 @@ Visual Basic Files
 
 ## Configuration
 
-The server automatically indexes `.vb` and `.vbs` files in your workspace, excluding common directories like `bin`, `obj`, and `node_modules`.
+### Default Behavior
+
+The server automatically indexes `.vb`, `.vbs`, `.bas`, `.cls`, and `.frm` files in your workspace, excluding common directories like `bin`, `obj`, `node_modules`, and `.git`.
+
+### Custom Configuration
+
+Create a `.vbconfig.json` file in your workspace root to customize the server behavior:
+
+```json
+{
+  "indexing": {
+    "enabled": true,
+    "includeFiles": ["**/*.vb", "**/*.vbs", "**/*.bas", "**/*.cls", "**/*.frm"],
+    "excludeDirectories": ["node_modules", "bin", "obj", ".git"]
+  },
+  "diagnostics": {
+    "enabled": true,
+    "checkMissingTypes": true,
+    "checkUnusedVariables": true,
+    "checkMissingEndStatements": true
+  }
+}
+```
+
+See `.vbconfig.example.json` for a complete example.
+
+### Diagnostic Codes
+
+- **VB001**: Variable declared without explicit type
+- **VB002**: Function without explicit return type
+- **VB003**: Missing or mismatched End statement
+- **VB004**: Unused variable
 
 ## Troubleshooting
 

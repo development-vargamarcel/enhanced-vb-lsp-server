@@ -38,6 +38,9 @@ const ws = __importStar(require("ws"));
 const cp = __importStar(require("child_process"));
 const PORT = process.env.PORT || 3001;
 const MAX_CLIENTS = 10;
+const RATE_LIMIT_WINDOW = 60000; // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 100; // Max requests per window
+const SPAWN_TIMEOUT = 5000; // 5 seconds timeout for spawning LSP process
 const activeConnections = new Map();
 const server = http.createServer((req, res) => {
     if (req.url === '/health') {
@@ -67,69 +70,152 @@ wss.on('connection', (socket, request) => {
         socket.close(1008, 'Server capacity reached');
         return;
     }
-    const lspProcess = cp.spawn('node', ['./out/server.js', '--stdio'], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, CLIENT_ID: clientId }
-    });
-    console.log(`[${new Date().toISOString()}] LSP server started for client ${clientId} (PID: ${lspProcess.pid})`);
-    const connection = {
-        socket,
-        process: lspProcess,
-        id: clientId
-    };
-    activeConnections.set(clientId, connection);
-    socket.on('message', (data) => {
-        try {
-            const message = data.toString();
-            if (lspProcess.stdin && !lspProcess.killed) {
-                lspProcess.stdin.write(message);
+    let spawnTimeout = null;
+    try {
+        const lspProcess = cp.spawn('node', ['./out/server.js', '--stdio'], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env, CLIENT_ID: clientId }
+        });
+        // Set timeout for spawn
+        spawnTimeout = setTimeout(() => {
+            if (!lspProcess.pid) {
+                console.error(`[${new Date().toISOString()}] LSP process spawn timeout for client ${clientId}`);
+                socket.close(1011, 'Server initialization timeout');
+                cleanupConnection(clientId);
             }
-        }
-        catch (error) {
-            console.error(`[${new Date().toISOString()}] Error forwarding message:`, error);
-        }
-    });
-    lspProcess.stdout.on('data', (data) => {
-        try {
-            const message = data.toString();
+        }, SPAWN_TIMEOUT);
+        lspProcess.on('spawn', () => {
+            if (spawnTimeout) {
+                clearTimeout(spawnTimeout);
+                spawnTimeout = null;
+            }
+            console.log(`[${new Date().toISOString()}] LSP server started for client ${clientId} (PID: ${lspProcess.pid})`);
+        });
+        const connection = {
+            socket,
+            process: lspProcess,
+            id: clientId,
+            messageCount: 0,
+            windowStart: Date.now(),
+            messageBuffer: ''
+        };
+        activeConnections.set(clientId, connection);
+        socket.on('message', (data) => {
+            try {
+                const connection = activeConnections.get(clientId);
+                if (!connection)
+                    return;
+                // Rate limiting
+                const now = Date.now();
+                if (now - connection.windowStart > RATE_LIMIT_WINDOW) {
+                    connection.messageCount = 0;
+                    connection.windowStart = now;
+                }
+                connection.messageCount++;
+                if (connection.messageCount > RATE_LIMIT_MAX_REQUESTS) {
+                    console.warn(`[${new Date().toISOString()}] Rate limit exceeded for client ${clientId}`);
+                    socket.close(1008, 'Rate limit exceeded');
+                    return;
+                }
+                const message = data.toString();
+                // Validate JSON-RPC message
+                try {
+                    const parsed = JSON.parse(message);
+                    if (!parsed.jsonrpc || !parsed.method) {
+                        console.warn(`[${new Date().toISOString()}] Invalid LSP message from client ${clientId}`);
+                        return;
+                    }
+                }
+                catch (e) {
+                    console.warn(`[${new Date().toISOString()}] Invalid JSON from client ${clientId}`);
+                    return;
+                }
+                if (lspProcess.stdin && !lspProcess.killed) {
+                    // Add Content-Length header for LSP protocol
+                    const contentLength = Buffer.byteLength(message, 'utf8');
+                    const header = `Content-Length: ${contentLength}\r\n\r\n`;
+                    lspProcess.stdin.write(header + message);
+                }
+            }
+            catch (error) {
+                console.error(`[${new Date().toISOString()}] Error forwarding message:`, error);
+            }
+        });
+        lspProcess.stdout.on('data', (data) => {
+            try {
+                const connection = activeConnections.get(clientId);
+                if (!connection)
+                    return;
+                // Append to buffer
+                connection.messageBuffer += data.toString();
+                // Process complete LSP messages (Content-Length format)
+                while (true) {
+                    const headerMatch = connection.messageBuffer.match(/Content-Length: (\d+)\r\n\r\n/);
+                    if (!headerMatch)
+                        break;
+                    const contentLength = parseInt(headerMatch[1], 10);
+                    const headerLength = headerMatch[0].length;
+                    const messageStart = headerMatch.index + headerLength;
+                    const messageEnd = messageStart + contentLength;
+                    if (connection.messageBuffer.length < messageEnd) {
+                        // Wait for more data
+                        break;
+                    }
+                    const message = connection.messageBuffer.substring(messageStart, messageEnd);
+                    connection.messageBuffer = connection.messageBuffer.substring(messageEnd);
+                    if (socket.readyState === ws.OPEN) {
+                        socket.send(message);
+                    }
+                }
+            }
+            catch (error) {
+                console.error(`[${new Date().toISOString()}] Error sending message:`, error);
+            }
+        });
+        lspProcess.stderr.on('data', (data) => {
+            console.error(`[${new Date().toISOString()}] LSP Error:`, data.toString());
+        });
+        lspProcess.on('exit', (code, signal) => {
+            console.log(`[${new Date().toISOString()}] LSP process exited (code: ${code}, signal: ${signal})`);
             if (socket.readyState === ws.OPEN) {
-                socket.send(message);
+                socket.close(1011, `Server process exited: ${code || signal}`);
             }
-        }
-        catch (error) {
-            console.error(`[${new Date().toISOString()}] Error sending message:`, error);
-        }
-    });
-    lspProcess.stderr.on('data', (data) => {
-        console.error(`[${new Date().toISOString()}] LSP Error:`, data.toString());
-    });
-    lspProcess.on('exit', (code) => {
-        console.log(`[${new Date().toISOString()}] LSP process exited (code: ${code})`);
-        cleanupConnection(clientId);
-    });
-    lspProcess.on('error', (error) => {
-        console.error(`[${new Date().toISOString()}] LSP process error:`, error);
-        cleanupConnection(clientId);
-    });
-    socket.on('close', () => {
-        console.log(`[${new Date().toISOString()}] Client ${clientId} disconnected`);
-        cleanupConnection(clientId);
-    });
-    socket.on('error', (error) => {
-        console.error(`[${new Date().toISOString()}] WebSocket error:`, error);
-        cleanupConnection(clientId);
-    });
-    const pingInterval = setInterval(() => {
-        if (socket.readyState === ws.OPEN) {
-            socket.ping();
-        }
-        else {
+            cleanupConnection(clientId);
+        });
+        lspProcess.on('error', (error) => {
+            console.error(`[${new Date().toISOString()}] LSP process error for client ${clientId}:`, error);
+            if (socket.readyState === ws.OPEN) {
+                socket.close(1011, 'Server process error');
+            }
+            cleanupConnection(clientId);
+        });
+        socket.on('close', () => {
+            console.log(`[${new Date().toISOString()}] Client ${clientId} disconnected`);
+            cleanupConnection(clientId);
+        });
+        socket.on('error', (error) => {
+            console.error(`[${new Date().toISOString()}] WebSocket error:`, error);
+            cleanupConnection(clientId);
+        });
+        const pingInterval = setInterval(() => {
+            if (socket.readyState === ws.OPEN) {
+                socket.ping();
+            }
+            else {
+                clearInterval(pingInterval);
+            }
+        }, 30000);
+        socket.on('close', () => {
             clearInterval(pingInterval);
-        }
-    }, 30000);
-    socket.on('close', () => {
-        clearInterval(pingInterval);
-    });
+        });
+    }
+    catch (error) {
+        console.error(`[${new Date().toISOString()}] Error setting up connection for ${clientId}:`, error);
+        if (spawnTimeout)
+            clearTimeout(spawnTimeout);
+        socket.close(1011, 'Server error');
+        cleanupConnection(clientId);
+    }
 });
 function cleanupConnection(clientId) {
     const connection = activeConnections.get(clientId);

@@ -6,7 +6,8 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
-    "start": "node out/server.js",
+    "start": "npm run compile && npm run start:bridge & sleep 2 && xdg-open client-demo.html || open client-demo.html || start client-demo.html",
+    "startQ": "node out/server.js",
     "start:bridge": "node out/websocket-bridge.js",
     "clean": "rm -rf out",
     "rebuild": "npm run clean && npm run compile"
